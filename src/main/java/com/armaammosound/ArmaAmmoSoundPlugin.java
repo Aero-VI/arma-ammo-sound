@@ -18,8 +18,8 @@ import net.runelite.client.plugins.PluginDescriptor;
 @Slf4j
 @PluginDescriptor(
 	name = "Arma 2 Ammo Sound",
-	description = "Plays the Arma 2 'cannot fire' dry click sound when you run out of ranged ammo",
-	tags = {"ammo", "ranged", "sound", "arma"}
+	description = "Plays Arma 2 'cannot fire' when out of ammo + CoD 'Mission Failed' on death",
+	tags = {"ammo", "ranged", "sound", "arma", "death", "cod"}
 )
 public class ArmaAmmoSoundPlugin extends Plugin
 {
@@ -29,11 +29,18 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	@Inject
 	private ArmaAmmoSoundConfig config;
 
-	private byte[] soundData;
-	private AudioFormat soundFormat;
+	private byte[] cannotFireData;
+	private AudioFormat cannotFireFormat;
+	private byte[] missionFailedData;
+	private AudioFormat missionFailedFormat;
+
 	private boolean wasRanging = false;
 	private int lastAmmoCount = -1;
 	private int ticksSinceRangedAttack = 0;
+	private boolean wasDead = false;
+
+	// Death animation IDs
+	private static final int DEATH_ANIM = 836;
 
 	@Provides
 	ArmaAmmoSoundConfig provideConfig(ConfigManager configManager)
@@ -44,38 +51,57 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	@Override
 	protected void startUp() throws Exception
 	{
-		loadSound();
-		log.info("Arma 2 Ammo Sound plugin started - CANNOT FIRE loaded");
+		cannotFireData = null;
+		cannotFireFormat = null;
+		missionFailedData = null;
+		missionFailedFormat = null;
+		loadSound("cannot_fire.wav", true);
+		loadSound("mission_failed.wav", false);
+		log.info("Arma 2 Ammo Sound plugin started - CANNOT FIRE + MISSION FAILED loaded");
 	}
 
 	@Override
 	protected void shutDown() throws Exception
 	{
-		soundData = null;
-		soundFormat = null;
+		cannotFireData = null;
+		cannotFireFormat = null;
+		missionFailedData = null;
+		missionFailedFormat = null;
 		log.info("Arma 2 Ammo Sound plugin stopped");
 	}
 
-	private void loadSound()
+	private void loadSound(String filename, boolean isCannotFire)
 	{
 		try
 		{
-			InputStream audioSrc = getClass().getResourceAsStream("cannot_fire.wav");
+			InputStream audioSrc = getClass().getResourceAsStream(filename);
 			if (audioSrc == null)
 			{
-				log.error("Cannot find cannot_fire.wav resource!");
+				log.error("Cannot find {} resource!", filename);
 				return;
 			}
 			InputStream bufferedIn = new BufferedInputStream(audioSrc);
 			AudioInputStream audioStream = AudioSystem.getAudioInputStream(bufferedIn);
-			soundFormat = audioStream.getFormat();
-			soundData = audioStream.readAllBytes();
+			AudioFormat format = audioStream.getFormat();
+			byte[] data = audioStream.readAllBytes();
 			audioStream.close();
-			log.info("Loaded cannot_fire.wav successfully ({} bytes)", soundData.length);
+
+			if (isCannotFire)
+			{
+				cannotFireFormat = format;
+				cannotFireData = data;
+			}
+			else
+			{
+				missionFailedFormat = format;
+				missionFailedData = data;
+			}
+
+			log.info("Loaded {} successfully ({} bytes)", filename, data.length);
 		}
 		catch (Exception e)
 		{
-			log.error("Failed to load cannot_fire.wav", e);
+			log.error("Failed to load {}", filename, e);
 		}
 	}
 
@@ -88,10 +114,22 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		}
 
 		int animId = event.getActor().getAnimation();
+
+		// Check for ranged attack animations
 		if (isRangedAnimation(animId))
 		{
 			wasRanging = true;
 			ticksSinceRangedAttack = 0;
+		}
+
+		// Check for death animation
+		if (animId == DEATH_ANIM && config.deathSoundEnabled())
+		{
+			if (!wasDead)
+			{
+				wasDead = true;
+				playSound(missionFailedData, missionFailedFormat, config.deathVolume());
+			}
 		}
 	}
 
@@ -106,6 +144,13 @@ public class ArmaAmmoSoundPlugin extends Plugin
 
 		ticksSinceRangedAttack++;
 
+		// Reset death flag when player is no longer dead
+		int currentHealth = client.getBoostedSkillLevel(Skill.HITPOINTS);
+		if (currentHealth > 0)
+		{
+			wasDead = false;
+		}
+
 		ItemContainer equipment = client.getItemContainer(InventoryID.WORN);
 		if (equipment == null)
 		{
@@ -117,7 +162,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		// Just ran out of ammo while ranging
 		if (wasRanging && lastAmmoCount > 0 && currentAmmo == 0)
 		{
-			playCannotFire();
+			playSound(cannotFireData, cannotFireFormat, config.volume());
 		}
 
 		// Full spam: keep firing sound while no ammo and still targeting an NPC
@@ -126,7 +171,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 			Actor target = player.getInteracting();
 			if (target instanceof NPC && ticksSinceRangedAttack < 10)
 			{
-				playCannotFire();
+				playSound(cannotFireData, cannotFireFormat, config.volume());
 			}
 		}
 
@@ -193,33 +238,29 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		}
 	}
 
-	private void playCannotFire()
+	private void playSound(byte[] data, AudioFormat format, int volumePct)
 	{
-		if (soundData == null || soundFormat == null)
+		if (data == null || format == null)
 		{
 			return;
 		}
 
-		// Play on a new thread to avoid blocking the game thread
 		new Thread(() ->
 		{
 			try
 			{
 				Clip clip = AudioSystem.getClip();
-				clip.open(soundFormat, soundData, 0, soundData.length);
+				clip.open(format, data, 0, data.length);
 
-				// Set volume
 				if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN))
 				{
 					FloatControl volumeControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
-					float volume = config.volume();
-					float dB = (float) (Math.log(Math.max(volume, 1) / 100.0) / Math.log(10.0) * 20.0);
+					float dB = (float) (Math.log(Math.max(volumePct, 1) / 100.0) / Math.log(10.0) * 20.0);
 					volumeControl.setValue(Math.max(dB, volumeControl.getMinimum()));
 				}
 
 				clip.start();
 
-				// Clean up after playback
 				clip.addLineListener(e ->
 				{
 					if (e.getType() == LineEvent.Type.STOP)
@@ -230,7 +271,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 			}
 			catch (Exception e)
 			{
-				log.error("Failed to play cannot fire sound", e);
+				log.error("Failed to play sound", e);
 			}
 		}).start();
 	}
