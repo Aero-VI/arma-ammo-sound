@@ -8,6 +8,7 @@ import java.io.InputStream;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.events.AnimationChanged;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
@@ -49,8 +50,24 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	private EventBus.Subscriber animSub;
 	private EventBus.Subscriber tickSub;
 	private EventBus.Subscriber configSub;
+	private EventBus.Subscriber chatSub;
 
 	private static final int DEATH_ANIM = 836;
+
+	// All known "out of ammo" game messages
+	private static final String[] AMMO_MESSAGES = {
+		"there is no ammo left in your quiver",
+		"you don't have any ammo",
+		"you have no ammunition",
+		"there's no ammo left in the quiver",
+		"you need something to shoot",
+		"you have no arrows left",
+		"you have no bolts left",
+		"you have no darts left",
+		"you do not have enough bolts",
+		"you do not have enough arrows",
+		"you don't have enough ammunition"
+	};
 
 	@Provides
 	ArmaAmmoSoundConfig provideConfig(ConfigManager configManager)
@@ -72,6 +89,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		animSub = eventBus.register(AnimationChanged.class, this::handleAnimationChanged, 0f);
 		tickSub = eventBus.register(GameTick.class, this::handleGameTick, 0f);
 		configSub = eventBus.register(ConfigChanged.class, this::handleConfigChanged, 0f);
+		chatSub = eventBus.register(ChatMessage.class, this::handleChatMessage, 0f);
 
 		log.info("Arma 2 Ammo Sound plugin started - CANNOT FIRE + MISSION FAILED loaded");
 	}
@@ -94,12 +112,56 @@ public class ArmaAmmoSoundPlugin extends Plugin
 			eventBus.unregister(configSub);
 			configSub = null;
 		}
+		if (chatSub != null)
+		{
+			eventBus.unregister(chatSub);
+			chatSub = null;
+		}
 
 		cannotFireData = null;
 		cannotFireFormat = null;
 		missionFailedData = null;
 		missionFailedFormat = null;
 		log.info("Arma 2 Ammo Sound plugin stopped");
+	}
+
+	private void handleChatMessage(ChatMessage event)
+	{
+		if (event.getType() != ChatMessageType.GAMEMESSAGE && event.getType() != ChatMessageType.SPAM)
+		{
+			return;
+		}
+
+		String msg = event.getMessage().toLowerCase();
+
+		for (String ammoMsg : AMMO_MESSAGES)
+		{
+			if (msg.contains(ammoMsg))
+			{
+				log.info("Ammo message detected: {}", event.getMessage());
+				playSound(cannotFireData, cannotFireFormat, config.volume());
+
+				if (config.fullSpam())
+				{
+					// Set wasRanging so the tick-based spam kicks in too
+					wasRanging = true;
+					ticksSinceRangedAttack = 0;
+					lastAmmoCount = 0;
+				}
+				return;
+			}
+		}
+
+		// Also check for "oh dear, you are dead!" for death sound
+		if (config.deathSoundEnabled() && msg.contains("oh dear, you are dead"))
+		{
+			if (!wasDead)
+			{
+				wasDead = true;
+				log.info("Death message detected!");
+				playSound(missionFailedData, missionFailedFormat, config.deathVolume());
+			}
+		}
 	}
 
 	private void handleConfigChanged(ConfigChanged event)
@@ -278,7 +340,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 			case 7618:  // Chinchompa
 			case 9168:  // Zaryte crossbow
 			case 9964:  // Webweaver bow
-				return true;
+			return true;
 			default:
 				return false;
 		}
