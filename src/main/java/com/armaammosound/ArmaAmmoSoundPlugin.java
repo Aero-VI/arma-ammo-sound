@@ -12,6 +12,7 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 
@@ -32,6 +33,9 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	@Inject
 	private EventBus eventBus;
 
+	@Inject
+	private ConfigManager configManager;
+
 	private byte[] cannotFireData;
 	private AudioFormat cannotFireFormat;
 	private byte[] missionFailedData;
@@ -44,6 +48,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 
 	private EventBus.Subscriber animSub;
 	private EventBus.Subscriber tickSub;
+	private EventBus.Subscriber configSub;
 
 	private static final int DEATH_ANIM = 836;
 
@@ -66,6 +71,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		// Use Consumer-based registration to avoid LambdaConversionException with @Subscribe
 		animSub = eventBus.register(AnimationChanged.class, this::handleAnimationChanged, 0f);
 		tickSub = eventBus.register(GameTick.class, this::handleGameTick, 0f);
+		configSub = eventBus.register(ConfigChanged.class, this::handleConfigChanged, 0f);
 
 		log.info("Arma 2 Ammo Sound plugin started - CANNOT FIRE + MISSION FAILED loaded");
 	}
@@ -83,12 +89,38 @@ public class ArmaAmmoSoundPlugin extends Plugin
 			eventBus.unregister(tickSub);
 			tickSub = null;
 		}
+		if (configSub != null)
+		{
+			eventBus.unregister(configSub);
+			configSub = null;
+		}
 
 		cannotFireData = null;
 		cannotFireFormat = null;
 		missionFailedData = null;
 		missionFailedFormat = null;
 		log.info("Arma 2 Ammo Sound plugin stopped");
+	}
+
+	private void handleConfigChanged(ConfigChanged event)
+	{
+		if (!"armaammosound".equals(event.getGroup()))
+		{
+			return;
+		}
+
+		if ("testAmmoSound".equals(event.getKey()) && "true".equals(event.getNewValue()))
+		{
+			playSound(cannotFireData, cannotFireFormat, config.volume());
+			// Auto-reset the toggle back to off
+			configManager.setConfiguration("armaammosound", "testAmmoSound", false);
+		}
+		else if ("testDeathSound".equals(event.getKey()) && "true".equals(event.getNewValue()))
+		{
+			playSound(missionFailedData, missionFailedFormat, config.deathVolume());
+			// Auto-reset the toggle back to off
+			configManager.setConfiguration("armaammosound", "testDeathSound", false);
+		}
 	}
 
 	private void loadSound(String filename, boolean isCannotFire)

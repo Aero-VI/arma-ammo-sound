@@ -23,6 +23,13 @@ public interface ArmaAmmoSoundConfig extends Config
 	)
 	String deathSection = "deathSection";
 
+	@ConfigSection(
+		name = "Test Sounds",
+		description = "Preview the sounds",
+		position = 2
+	)
+	String testSection = "testSection";
+
 	@ConfigItem(
 		keyName = "fullSpam",
 		name = "Full Spam Mode",
@@ -67,5 +74,27 @@ public interface ArmaAmmoSoundConfig extends Config
 	default int deathVolume()
 	{
 		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "testAmmoSound",
+		name = "▶ Test Ammo Sound",
+		description = "Toggle ON to preview the 'cannot fire' dry click, it will auto-reset",
+		section = testSection
+	)
+	default boolean testAmmoSound()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "testDeathSound",
+		name = "▶ Test Death Sound",
+		description = "Toggle ON to preview 'Mission Failed', it will auto-reset",
+		section = testSection
+	)
+	default boolean testDeathSound()
+	{
+		return false;
 	}
 }
