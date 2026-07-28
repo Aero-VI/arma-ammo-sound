@@ -11,7 +11,7 @@ import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 
@@ -29,6 +29,9 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	@Inject
 	private ArmaAmmoSoundConfig config;
 
+	@Inject
+	private EventBus eventBus;
+
 	private byte[] cannotFireData;
 	private AudioFormat cannotFireFormat;
 	private byte[] missionFailedData;
@@ -39,7 +42,9 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	private int ticksSinceRangedAttack = 0;
 	private boolean wasDead = false;
 
-	// Death animation IDs
+	private EventBus.Subscriber animSub;
+	private EventBus.Subscriber tickSub;
+
 	private static final int DEATH_ANIM = 836;
 
 	@Provides
@@ -57,12 +62,28 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		missionFailedFormat = null;
 		loadSound("cannot_fire.wav", true);
 		loadSound("mission_failed.wav", false);
+
+		// Use Consumer-based registration to avoid LambdaConversionException with @Subscribe
+		animSub = eventBus.register(AnimationChanged.class, this::handleAnimationChanged, 0f);
+		tickSub = eventBus.register(GameTick.class, this::handleGameTick, 0f);
+
 		log.info("Arma 2 Ammo Sound plugin started - CANNOT FIRE + MISSION FAILED loaded");
 	}
 
 	@Override
 	protected void shutDown() throws Exception
 	{
+		if (animSub != null)
+		{
+			eventBus.unregister(animSub);
+			animSub = null;
+		}
+		if (tickSub != null)
+		{
+			eventBus.unregister(tickSub);
+			tickSub = null;
+		}
+
 		cannotFireData = null;
 		cannotFireFormat = null;
 		missionFailedData = null;
@@ -105,8 +126,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		}
 	}
 
-	@Subscribe
-	public void onAnimationChanged(AnimationChanged event)
+	private void handleAnimationChanged(AnimationChanged event)
 	{
 		if (event.getActor() != client.getLocalPlayer())
 		{
@@ -115,14 +135,12 @@ public class ArmaAmmoSoundPlugin extends Plugin
 
 		int animId = event.getActor().getAnimation();
 
-		// Check for ranged attack animations
 		if (isRangedAnimation(animId))
 		{
 			wasRanging = true;
 			ticksSinceRangedAttack = 0;
 		}
 
-		// Check for death animation
 		if (animId == DEATH_ANIM && config.deathSoundEnabled())
 		{
 			if (!wasDead)
@@ -133,8 +151,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 		}
 	}
 
-	@Subscribe
-	public void onGameTick(GameTick event)
+	private void handleGameTick(GameTick event)
 	{
 		Player player = client.getLocalPlayer();
 		if (player == null)
@@ -144,7 +161,6 @@ public class ArmaAmmoSoundPlugin extends Plugin
 
 		ticksSinceRangedAttack++;
 
-		// Reset death flag when player is no longer dead
 		int currentHealth = client.getBoostedSkillLevel(Skill.HITPOINTS);
 		if (currentHealth > 0)
 		{
@@ -159,13 +175,11 @@ public class ArmaAmmoSoundPlugin extends Plugin
 
 		int currentAmmo = getAmmoCount(equipment);
 
-		// Just ran out of ammo while ranging
 		if (wasRanging && lastAmmoCount > 0 && currentAmmo == 0)
 		{
 			playSound(cannotFireData, cannotFireFormat, config.volume());
 		}
 
-		// Full spam: keep firing sound while no ammo and still targeting an NPC
 		if (config.fullSpam() && wasRanging && currentAmmo == 0)
 		{
 			Actor target = player.getInteracting();
@@ -221,7 +235,7 @@ public class ArmaAmmoSoundPlugin extends Plugin
 	{
 		switch (animId)
 		{
-			case 426:   // Bows (shortbow, longbow, dark bow, crystal bow, bowfa)
+			case 426:   // Bows
 			case 1074:  // Magic shortbow spec
 			case 2075:  // Karil's crossbow
 			case 4230:  // Crossbow
